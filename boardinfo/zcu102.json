@@ -11,7 +11,7 @@
         "constraints": [],
         "implconstraints": ["constraints/xilinx/zcu102.xdc"],
         "TOP" : "ZynqUltraTop",
-        "runscript" : "run.pcietest",
+        "runscript" : "run.ubuntu",
         "CONNECTALFLAGS" : ["--mainclockperiod=5", "--derivedclockperiod=2.5"],
         "need_pcie" : "unused"
     },
@@ -357,43 +357,43 @@
     },
     "leds" : {
     	"L0" : {
-	     "PACKAGE_PIN" : "TBD",
-             "IOSTANDARD" : "LVCMOS25",
+	     "PACKAGE_PIN" : "AG14",
+             "IOSTANDARD" : "LVCMOS33",
 	     "PIO_DIRECTION" : "OUTPUT"
 	     },
     	"L1" : {
-	     "PACKAGE_PIN" : "TBD",
-             "IOSTANDARD" : "LVCMOS25",
+	     "PACKAGE_PIN" : "AF13",
+             "IOSTANDARD" : "LVCMOS33",
 	     "PIO_DIRECTION" : "OUTPUT"
 	     },
     	"L2" : {
-	     "PACKAGE_PIN" : "TBD",
-             "IOSTANDARD" : "LVCMOS25",
+	     "PACKAGE_PIN" : "AE13",
+             "IOSTANDARD" : "LVCMOS33",
 	     "PIO_DIRECTION" : "OUTPUT"
 	     },
     	"L3" : {
-	     "PACKAGE_PIN" : "TBD",
-             "IOSTANDARD" : "LVCMOS25",
+	     "PACKAGE_PIN" : "AJ14",
+             "IOSTANDARD" : "LVCMOS33",
 	     "PIO_DIRECTION" : "OUTPUT"
 	     },
     	"L4" : {
-	     "PACKAGE_PIN" : "TBD",
-             "IOSTANDARD" : "LVCMOS25",
+	     "PACKAGE_PIN" : "AJ15",
+             "IOSTANDARD" : "LVCMOS33",
 	     "PIO_DIRECTION" : "OUTPUT"
 	     },
     	"L5" : {
-	     "PACKAGE_PIN" : "TBD",
-             "IOSTANDARD" : "LVCMOS25",
+	     "PACKAGE_PIN" : "AH13",
+             "IOSTANDARD" : "LVCMOS33",
 	     "PIO_DIRECTION" : "OUTPUT"
 	     },
     	"L6" : {
-	     "PACKAGE_PIN" : "TBD",
-             "IOSTANDARD" : "LVCMOS25",
+	     "PACKAGE_PIN" : "AH14",
+             "IOSTANDARD" : "LVCMOS33",
 	     "PIO_DIRECTION" : "OUTPUT"
 	     },
     	"L7" : {
-	     "PACKAGE_PIN" : "TBD",
-             "IOSTANDARD" : "LVCMOS25",
+	     "PACKAGE_PIN" : "AL12",
+             "IOSTANDARD" : "LVCMOS33",
 	     "PIO_DIRECTION" : "OUTPUT"
 	     }
     },  
