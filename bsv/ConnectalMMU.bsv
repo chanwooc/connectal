@@ -51,7 +51,8 @@ typedef 20 SGListPageShift8;
 typedef 24 SGListPageShift12;
 typedef Bit#(TLog#(MaxNumSGLists)) RegionsIdx;
 
-typedef 8 IndexWidth;
+//typedef 8 IndexWidth; // 8 only supports upto 255MB allocation
+typedef 13 IndexWidth
 
 typedef struct {
    SGListId             id;
@@ -219,7 +220,7 @@ module mkMMUSynth#(Bit#(4) mmuid, Bool hostMapped)(MMUSynth#(PhysAddrWidth));
    Vector#(2, FIFOF#(Stage4Params)) stage4Params <- replicateM(mkFIFOF);
 
    // stage 4 (latency == 2)
-   BRAM2Port#(Bit#(TAdd#(TLog#(MaxNumSGLists),8)),Page0) translationTable <- ConnectalBram::mkBRAM2Server(bramConfig);
+   BRAM2Port#(Bit#(TAdd#(TLog#(MaxNumSGLists),IndexWidth)),Page0) translationTable <- ConnectalBram::mkBRAM2Server(bramConfig);
    Vector#(2,FIFOF#(Offset))           offs1 <- replicateM(mkSizedFIFOF(3));
 
    // stage 4 (latnecy == 1)
