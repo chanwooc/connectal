@@ -6,7 +6,7 @@ set prj_boardname $boardname
 set core_version "2.0"
 if {[version -short] >= "2017.3"} {
     set core_version "3.1"
-}elseif {[version -short] >= "2017.1"} {
+} elseif {[version -short] >= "2017.1"} {
     set core_version "3.0"
 }
 
