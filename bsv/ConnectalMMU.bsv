@@ -52,7 +52,7 @@ typedef 24 SGListPageShift12;
 typedef Bit#(TLog#(MaxNumSGLists)) RegionsIdx;
 
 //typedef 8 IndexWidth; // 8 only supports upto 255MB allocation
-typedef 13 IndexWidth
+typedef 13 IndexWidth;
 
 typedef struct {
    SGListId             id;
