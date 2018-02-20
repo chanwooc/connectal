@@ -371,7 +371,14 @@ instance ConnectableWithTrace#(PS8LIB, Platform, traceType);
 `ifdef USE_ACP
       physMemSlaves[0] = physMemSlaveAcp;
 `endif      
+
       // makes NumberOfMasters connections
+`ifndef BYPASS_AXI_SLAVE
+      // use all AXI ports including HPC ports
       zipWithM(mkConnection, top.masters, take(physMemSlaves));
+`else
+      // bypass a few AXI Slave ports (connect from saxigp_`BYPASS_AXI_SLAVE)
+      zipWithM(mkConnection, top.masters, takeAt(`BYPASS_AXI_SLAVE, physMemSlaves));
+`endif
    endmodule
 endinstance
