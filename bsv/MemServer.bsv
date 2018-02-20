@@ -143,7 +143,8 @@ module mkMemServerRead#(MemServerIndication indication,
       readers[i] <- mkMemReadInternal(indication,ss);
       read_clients[i] = readers[i].client;
       for(Integer j = 0; j < valueOf(nrc); j=j+1)
-	 read_servers[i*valueOf(nrc)+j] = readers[i].servers[j];
+	 //read_servers[i*valueOf(nrc)+j] = readers[i].servers[j];
+	 read_servers[j*valueOf(numClients)+i] = readers[i].servers[j];
    end
    
    rule mmuEntry;
@@ -226,7 +227,8 @@ module mkMemServerWrite#(MemServerIndication indication,
       writers[i] <- mkMemWriteInternal(indication, ss);
       write_clients[i] = writers[i].client;
       for(Integer j = 0; j < valueOf(nwc); j=j+1)
-	 write_servers[i*valueOf(nwc)+j] = writers[i].servers[j];
+	 //write_servers[i*valueOf(nwc)+j] = writers[i].servers[j];
+	 write_servers[j*valueOf(numClients)+i] = writers[i].servers[j];
    end
    
    rule mmuEntry;
