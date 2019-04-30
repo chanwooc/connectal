@@ -372,6 +372,13 @@ instance ConnectableWithTrace#(PS8LIB, Platform, traceType);
       physMemSlaves[0] = physMemSlaveAcp;
 `endif      
       // makes NumberOfMasters connections
+`ifndef ZCU_AXI_SLAVE_START
+      // use all AXI ports from beginning (saxigp0 = HP Coherency port 0)
       zipWithM(mkConnection, top.masters, take(physMemSlaves));
+`else
+      // Connect AXI slaves to ports starting saxigp_`ZCU_AXI_SLAVE_START
+      // e.g. ZCU_AXI_SLAVE_START=2 -> connection starts at saxigp2 (= HP Non-coherency port 0)
+      zipWithM(mkConnection, top.masters, takeAt(`ZCU_AXI_SLAVE_START, physMemSlaves));
+`endif
    endmodule
 endinstance
