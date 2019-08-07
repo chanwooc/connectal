@@ -307,7 +307,7 @@ endif
 ifeq ($(BOARD),zcu102)
 	@echo "building ... $(BOARD) Zynq MPSOC core"
 	$(Q)[ -e $(IPDIR) ] || mkdir -p $(IPDIR)
-	cd $(PROJECTDIR); BUILDCACHE_CACHEDIR=$(BUILDCACHE_CACHEDIR) $(BUILDCACHE) vivado -notrace -mode batch -source $(shell cd $(CONNECTALDIR); /bin/pwd)/scripts/connectal-synth-zynq-mpsoc.tcl
+	if ! [ -e $(IPDIR)/zcu102/zynq_ultra_ps_e_0 ]; then cd $(PROJECTDIR); BUILDCACHE_CACHEDIR=$(BUILDCACHE_CACHEDIR) $(BUILDCACHE) vivado -notrace -mode batch -source $(shell cd $(CONNECTALDIR); /bin/pwd)/scripts/connectal-synth-zynq-mpsoc.tcl; fi
 endif
 
 ifneq (, $(QUARTUS_SH))

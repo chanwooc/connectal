@@ -21,6 +21,7 @@
 // SOFTWARE.
 
 import Clocks::*;
+import Real::*;
 
 `include "ConnectalProjectConfig.bsv"
 
@@ -28,8 +29,13 @@ import Clocks::*;
 Real pcieClockPeriod = `PcieClockPeriod;
 `endif
 
-Real mainClockPeriod = `MainClockPeriod;
-Real derivedClockPeriod =`DerivedClockPeriod;
+//Real mainClockPeriod = `MainClockPeriod;
+//Real derivedClockPeriod =`DerivedClockPeriod;
+
+// To deal with non-integer mainClockPeriod..
+// These numbers are for clock generation so could be ratioed numbers
+Real mainClockPeriod = fromInteger(trunc(`MainClockPeriod));
+Real derivedClockPeriod = mainClockPeriod * `DerivedClockPeriod / `MainClockPeriod;
 
 (* always_ready, always_enabled *)
 interface B2C;

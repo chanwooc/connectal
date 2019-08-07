@@ -89,7 +89,7 @@ argparser.add_argument('--prtop', help='Filename of previously synthesized top l
 argparser.add_argument('--prvariant', help='name of a variant for partial reconfiguration', action='append', default=[])
 argparser.add_argument('--reconfig', help='partial reconfig module names', action='append', default=[])
 argparser.add_argument('--bsvpath', help='directories to add to bsc search path', action='append', default=[])
-argparser.add_argument('--mainclockperiod', help='Clock period of default clock, in nanoseconds', type=int, default=10)
+argparser.add_argument('--mainclockperiod', help='Clock period of default clock, in nanoseconds', type=float, default=10.0)
 argparser.add_argument('--derivedclockperiod', help='Clock period of derivedClock, in nanoseconds', type=float, default=5.0)
 argparser.add_argument('--pcieclockperiod', help='Clock period of PCIE clock, in nanoseconds', type=int, default=None)
 argparser.add_argument('--run-args', help='Argument to pass via RUN_ARGS when running application', action='append', default=[])
@@ -308,7 +308,7 @@ if __name__=='__main__':
     bsvdefines = options.bsvdefine
     bsvdefines.append('project_dir=$(DTOP)')
     print bsvdefines
-    bsvdefines.append('MainClockPeriod=%d' % options.mainclockperiod)
+    bsvdefines.append('MainClockPeriod=%f' % options.mainclockperiod)
     bsvdefines.append('DerivedClockPeriod=%f' % options.derivedclockperiod)
     if options.pcieclockperiod:
         bsvdefines.append('PcieClockPeriod=%d' % options.pcieclockperiod)
