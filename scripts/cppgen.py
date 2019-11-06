@@ -24,7 +24,12 @@
 
 import functools, json, math, os, re, sys, util
 
+generatedSubdirectory = 'jni'
 verbose = False
+generateJson = True
+generatePacketOnly = False
+suppressGeneratedMakefile = False
+synchronousInvoke = False
 sizeofUint32_t = 4
 generatedVectors = []
 itypeNames = ['int', 'int8_t', 'uint8_t', 'int16_t', 'uint16_t', 'int32_t', 'uint32_t', 'uint64_t', 'SpecialTypeForSendingFd', 'ChannelType', 'DmaDbgRec']
@@ -34,11 +39,64 @@ class %(className)sProxy : public Portal {
     %(classNameOrig)sCb *cb;
 public:
     %(className)sProxy(int id, int tile = DEFAULT_TILE, %(classNameOrig)sCb *cbarg = &%(className)sProxyReq, int bufsize = %(classNameOrig)s_reqinfo, PortalPoller *poller = 0) :
-        Portal(id, tile, bufsize, NULL, NULL, this, poller), cb(cbarg) {};
+        Portal(id, tile, bufsize, %(handlerName)s, NULL, this, poller), cb(cbarg) {%(initName)s};
     %(className)sProxy(int id, PortalTransportFunctions *transport, void *param, %(classNameOrig)sCb *cbarg = &%(className)sProxyReq, int bufsize = %(classNameOrig)s_reqinfo, PortalPoller *poller = 0) :
-        Portal(id, DEFAULT_TILE, bufsize, NULL, NULL, transport, param, this, poller), cb(cbarg) {};
+        Portal(id, DEFAULT_TILE, bufsize, %(handlerName)s, NULL, transport, param, this, poller), cb(cbarg) {%(initName)s};
     %(className)sProxy(int id, PortalPoller *poller) :
-        Portal(id, DEFAULT_TILE, %(classNameOrig)s_reqinfo, NULL, NULL, NULL, NULL, this, poller), cb(&%(className)sProxyReq) {};
+        Portal(id, DEFAULT_TILE, %(classNameOrig)s_reqinfo, %(handlerName)s, NULL, NULL, NULL, this, poller), cb(&%(className)sProxyReq) {%(initName)s};
+'''
+
+syncProxyTemplate='''
+private:
+    static int __internalHandleMessage(struct PortalInternal *p, unsigned int channel, int messageFd) {
+        return ((%(className)sProxy *)p->parent)->__internalResponse(p, channel);
+    }
+    sem_t *__internalWaitSemaphore;
+    sem_t __internalWaitSemaphoreBody;
+    uint64_t __internalWaitResult;
+    unsigned int __internalWaitMethod;
+    int __internalWaitSize;
+    void __internalInit() {
+        if ((__internalWaitSemaphore = sem_open("/semaphore", O_CREAT, 0644, 0)) == SEM_FAILED) {
+            __internalWaitSemaphore = &__internalWaitSemaphoreBody;
+            if (sem_init(__internalWaitSemaphore, 1, 0) == 0)
+                return;
+            perror("sem_open failed");
+            exit(-1);
+        }
+    }
+    int __internalResponse(struct PortalInternal *p, unsigned int channel) {
+        int tmpfd __attribute__ ((unused));
+        volatile unsigned int* temp_working_addr = &p->map_base[1];
+        int offset = 0, remain = 1;
+        uint32_t temp = (uint32_t)(((temp_working_addr[offset])&0xfffffffful));
+        offset++;
+        int messageSize = temp & 0xffff;
+        temp = temp >> 16;
+        if (channel != __internalWaitMethod || __internalWaitSize != messageSize)
+             printf("%(className)sProxy: channel %%d/%%d waitSize %%d messageSize %%d\\n", channel, __internalWaitMethod, __internalWaitSize, messageSize);
+        __internalWaitResult = 0;
+        uint16_t *dest = (uint16_t *)&__internalWaitResult;
+        while (messageSize > 0) {
+            if (remain == 0) {
+                temp = (uint32_t)(((temp_working_addr[offset])&0xfffffffful));
+                offset++;
+                remain = 2;
+            }
+            *dest++ = temp & 0xffff;
+            temp = temp >> 16;
+            messageSize -= 16;
+            --remain;
+        }
+        sem_post(__internalWaitSemaphore);
+        return 0;
+    }
+    uint64_t __internalWaitReturn(int method, int size) {
+        __internalWaitMethod = method;
+        __internalWaitSize = size;
+        sem_wait(__internalWaitSemaphore);
+        return __internalWaitResult;
+    }
 '''
 
 wrapperClassPrefixTemplate='''
@@ -75,23 +133,25 @@ typedef union {
     %(messageStructDeclarations)s
 } %(className)sData;'''
 
+handleMessageTemplateTmpDecl='''
+    int   tmp __attribute__ ((unused));'''
+
 handleMessageTemplate1='''
 {
-    static int runaway = 0;
-    int   tmp __attribute__ ((unused));
+    static int runaway = 0;%(tmpDecl)s
     int tmpfd __attribute__ ((unused));
     %(classNameOrig)sData tempdata __attribute__ ((unused));
     memset(&tempdata, 0, sizeof(tempdata));
     %(handleStartup)s
     switch (channel) {'''
 
+handleMessagePrepRecv='''
+        p->transport->recv(p, temp_working_addr, %(wordLen)s, &tmpfd);'''
 handleMessagePrep='''
-        p->transport->recv(p, temp_working_addr, %(wordLen)s, &tmpfd);
         %(paramStructDemarshall)s'''
 
 handleMessageCase='''
-    case %(channelNumber)s: {
-        %(responseCase)s
+    case %(channelNumber)s: {%(responseCase)s
       } break;'''
 
 handleMessageTemplate2='''
@@ -119,13 +179,18 @@ proxyMethodTableDecl='''
 proxyMethodTemplateDecl='''
 int %(className)s_%(methodName)s (%(paramProxyDeclarations)s )'''
 
-proxyMethodTemplate='''
-{
+proxyMethodTemplateProlog='''
     volatile unsigned int* temp_working_addr_start = p->transport->mapchannelReq(p, %(channelNumber)s, %(wordLenP1)s);
     volatile unsigned int* temp_working_addr = temp_working_addr_start;
-    if (p->transport->busywait(p, %(channelNumber)s, "%(className)s_%(methodName)s")) return 1;
+    if (p->transport->busywait(p, %(channelNumber)s, "%(className)s_%(methodName)s")) return 1;'''
+
+proxyMethodTemplatePrologPacket='''
+    unsigned int temp_working_addr_start[%(wordLenP1)s + 1] = {0, (%(channelNumber)s << 16) | %(wordLenP1)s,'''
+
+proxyMethodTemplate='''
+{%(prolog)s
     %(paramStructMarshall)s
-    p->transport->send(p, temp_working_addr_start, (%(channelNumber)s << 16) | %(wordLenP1)s, %(fdName)s);
+    p->transport->send(p, %(temp)s, (%(channelNumber)s << 16) | %(wordLenP1)s, %(fdName)s);
     return 0;
 };
 '''
@@ -397,59 +462,76 @@ def accumWords(s, pro, memberList):
         #print '%s (2)'% (name)
         return [s]+accumWords([],pro+(32-w), memberList)
 
-def generate_marshall(pfmt, w):
+def generate_marshall(pfmt, argWords):
     global fdName
-    off = 0
-    fields = []
-    fmt = pfmt
-    outstr = ''
-    for e in w:
-        field = e.name
-        if typeCName(e.datatype) == 'float':
-            return pfmt % ('*(int*)&' + e.name)
-        mask = signCName(e.datatype)
-        if mask:
-            field = '(%s & %s)' % (field, mask)
-        if e.shifted:
-            field = '(%s>>%s)' % (field, e.shifted)
-        if off:
-            field = '(((unsigned long)%s)<<%s)' % (field, off)
-        if typeBitWidth(e.datatype) > 64:
-            field = '(const %s & std::bitset<%d>(0xFFFFFFFF)).to_ulong()' % (field, typeBitWidth(e.datatype))
-        fields.append(field)
-        off = off+e.width-e.shifted
-        if typeCName(e.datatype) == 'SpecialTypeForSendingFd':
-            fdName = field
-            fmt = 'p->transport->writefd(p, &temp_working_addr, %s);'
-    return fmt % (''.join(util.intersperse('|', fields)))
+    retList = []
+    for w in argWords:
+        off = 0
+        fields = []
+        fmt = pfmt
+        outstr = ''
+        for e in w:
+            field = e.name
+            if typeCName(e.datatype) == 'float':
+                return pfmt % ('*(int*)&' + e.name)
+            mask = signCName(e.datatype)
+            if mask:
+                field = '(%s & %s)' % (field, mask)
+            if e.shifted:
+                field = '(%s>>%s)' % (field, e.shifted)
+            if off:
+                field = '(((unsigned long)%s)<<%s)' % (field, off)
+            if typeBitWidth(e.datatype) > 64:
+                field = '(const %s & std::bitset<%d>(0xFFFFFFFF)).to_ulong()' % (field, typeBitWidth(e.datatype))
+            fields.append(field)
+            off = off+e.width-e.shifted
+            if typeCName(e.datatype) == 'SpecialTypeForSendingFd':
+                fdName = field
+                fmt = 'p->transport->writefd(p, &temp_working_addr, %s);'
+                if generatePacketOnly:
+                    print 'generate_marshall: when using "generatePacketOnly", fd items cannot be sent'
+                    sys.exit(-1)
+        retList.append(fmt % (''.join(util.intersperse('|', fields))))
+    return retList
 
-def generate_demarshall(argStruct, w):
-    fmt, methodName = argStruct
-    off = 0
-    statements = []
-    statements.append(fmt)
-    for e in w:
-        # print e.name+' (d)'
-        field = 'tmp'
-        if typeCName(e.datatype) == 'float':
-            statements.append('tempdata.%s.%s %s *(float *)&(%s);'%(methodName, e.name, e.assignOp, field))
-            continue
-        if off:
-            field = '%s>>%s' % (field, off)
-        #print 'JJJ', e.name, '{{'+field+'}}', typeBitWidth(e.datatype), e.shifted, e.assignOp, off
-        fieldWidth = 32 - off     # number of valid data bits in source
-        fieldWidth += e.shifted   # number of valid data bits after shifting
-        if fieldWidth > typeBitWidth(e.datatype): # if num bits in type < num of valid bits
-            fieldWidth = typeBitWidth(e.datatype)
-        field = '((%s)&0x%xul)' % (field, ((1 << (fieldWidth - e.shifted))-1))
-        if e.shifted:
-            field = '((%s)(%s)<<%s)' % (typeCName(e.datatype),field, e.shifted)
-        if typeCName(e.datatype) == 'SpecialTypeForSendingFd':
-            statements.append('tempdata.%s.%s %s messageFd;'%(methodName, e.name, e.assignOp))
-        else:
-            statements.append('tempdata.%s.%s %s (%s)(%s);'%(methodName, e.name, e.assignOp, typeCName(e.datatype), field))
-        off = off+e.width-e.shifted
-    return '\n        '.join(statements)
+def generate_demarshall(fmt, methodName, argWords):
+    retList = []
+    itemIndex = 0
+    for w in argWords:
+        off = 0
+        statements = []
+        if (fmt != ''):
+            statements.append(fmt)
+        for e in w:
+            # print e.name+' (d)'
+            if generatePacketOnly:
+                field = 'temp_working_addr[%d]' % itemIndex
+            else:
+                field = 'tmp'
+            if typeCName(e.datatype) == 'float':
+                statements.append('tempdata.%s.%s %s *(float *)&(%s);'%(methodName, e.name, e.assignOp, field))
+                continue
+            if off:
+                field = '%s>>%s' % (field, off)
+            #print 'JJJ', e.name, '{{'+field+'}}', typeBitWidth(e.datatype), e.shifted, e.assignOp, off
+            fieldWidth = 32 - off     # number of valid data bits in source
+            fieldWidth += e.shifted   # number of valid data bits after shifting
+            if fieldWidth > typeBitWidth(e.datatype): # if num bits in type < num of valid bits
+                fieldWidth = typeBitWidth(e.datatype)
+            field = '((%s)&0x%xul)' % (field, ((1 << (fieldWidth - e.shifted))-1))
+            if e.shifted:
+                field = '((%s)(%s)<<%s)' % (typeCName(e.datatype),field, e.shifted)
+            if typeCName(e.datatype) == 'SpecialTypeForSendingFd':
+                if generatePacketOnly:
+                    print 'generate_demarshall: when using "generatePacketOnly", fd items cannot be sent'
+                    sys.exit(-1)
+                statements.append('tempdata.%s.%s %s messageFd;'%(methodName, e.name, e.assignOp))
+            else:
+                statements.append('tempdata.%s.%s %s (%s)(%s);'%(methodName, e.name, e.assignOp, typeCName(e.datatype), field))
+            off = off+e.width-e.shifted
+        retList.append('\n        '.join(statements))
+        itemIndex += 1
+    return retList
 
 def formalParameters(params, insertPortal):
     rc = [ 'const %s %s' % (typeCName(pitem['ptype']), pitem['pname']) for pitem in params]
@@ -520,19 +602,25 @@ def gatherMethodInfo(mname, params, itemname, classNameOrig, classVariant):
     argAtoms = sum(map(functools.partial(collectMembers, ''), params), [])
     argAtoms.reverse()
     argWords  = accumWords([], 0, argAtoms)
+    argWords.reverse()
     fdName = '-1'
 
-    paramStructMarshallStr = 'p->transport->write(p, &temp_working_addr, %s);'
-    paramStructDemarshallStr = 'tmp = p->transport->read(p, &temp_working_addr);'
+    if generatePacketOnly:
+        paramStructMarshallStr = '        (unsigned int)(%s),'
+        paramStructDemarshallStr = ''
+    else:
+        paramStructMarshallStr = 'p->transport->write(p, &temp_working_addr, %s);'
+        paramStructDemarshallStr = 'tmp = p->transport->read(p, &temp_working_addr);'
 
     if argWords == []:
-        paramStructMarshall = [paramStructMarshallStr % '0']
+        if generatePacketOnly:
+            paramStructMarshall = []
+        else:
+            paramStructMarshall = [paramStructMarshallStr % '0']
         paramStructDemarshall = [paramStructDemarshallStr]
     else:
-        paramStructMarshall = map(functools.partial(generate_marshall, paramStructMarshallStr), argWords)
-        paramStructMarshall.reverse()
-        paramStructDemarshall = map(functools.partial(generate_demarshall, [paramStructDemarshallStr, methodName]), argWords)
-        paramStructDemarshall.reverse()
+        paramStructMarshall = generate_marshall(paramStructMarshallStr, argWords)
+        paramStructDemarshall = generate_demarshall(paramStructDemarshallStr, methodName, argWords)
 
     chname = '%s_%s' % (classNameOrig, methodName)
     if verbose:
@@ -579,21 +667,34 @@ def gatherMethodInfo(mname, params, itemname, classNameOrig, classVariant):
     respCase = '\n        ((%(classNameOrig)sCb *)p->cb)->%(name)s(%(params)s);'
     if not classVariant:
         respCase = handleMessagePrep + respCase
+        if not generatePacketOnly:
+            respCase = handleMessagePrepRecv + respCase
     substs['responseCase'] = respCase % substs
     return substs, len(argWords)
 
-def emitMethodDeclaration(mname, params, f, className):
+def emitMethodDeclaration(mname, params, f, className, methodIndex, returnType):
     paramValues = [pitem['pname'] for pitem in params]
     paramValues.insert(0, '&pint')
     methodName = cName(mname)
     indent(f, 4)
     if className == '':
         f.write('virtual void')
+    elif synchronousInvoke:
+        if returnType is not None:
+            f.write(typeCName(returnType))
+        else:
+            f.write('void')
     else:
         f.write('int')
     f.write((' %s ( ' % methodName) + formalParameters(params, False) + ' ) ')
     if className == '':
         f.write('= 0;\n')
+    elif synchronousInvoke:
+        f.write('{ cb->%s (' % methodName)
+        f.write(', '.join(paramValues) + ');')
+        if returnType is not None:
+            f.write(' return __internalWaitReturn(%d, %d);' % (methodIndex, typeBitWidth(returnType)))
+        f.write(' };\n')
     else:
         f.write('{ return cb->%s (' % methodName)
         f.write(', '.join(paramValues) + '); };\n')
@@ -607,10 +708,18 @@ int %(classNameOrig)sdisconnect_cb (struct PortalInternal *p) {
 };
 '''
 
-def generate_class(classNameOrig, classVariant, declList, generatedCFiles, create_cpp_file, generated_hpp, generated_cpp):
+def generate_class(classNameOrig, classVariant, declList, generatedCFiles, create_cpp_file, generated_hpp, generated_cpp, direction):
     global generatedVectors
     className = classNameOrig + classVariant
     classCName = cName(className)
+    generateProxy = True
+    generateWrapper = True
+    if direction == '0':
+        generateWrapper = False
+        print 'JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ Proxy ', className
+    if direction == '1':
+        generateProxy = False
+        print 'JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ Wrapper ', className
     if classVariant == 'Json':
         cppname = '%s.cpp' % className
     else:
@@ -631,6 +740,7 @@ def generate_class(classNameOrig, classVariant, declList, generatedCFiles, creat
         hpp = create_cpp_file(hppname)
         hpp.write('#ifndef _%(name)s_H_\n#define _%(name)s_H_\n' % {'name': className.upper()})
         hpp.write('#include "portal.h"\n')
+    if (not classVariant) and generateWrapper:
         generated_cpp.write(wrapperStartTemplate % cnSubst)
     for mitem in declList:
         if verbose:
@@ -641,59 +751,92 @@ def generate_class(classNameOrig, classVariant, declList, generatedCFiles, creat
         methodList.append(substs['methodName'])
         reqChanNums.append(substs['channelNumber'])
     methodJsonDeclarations = ['{"%(methodName)s", %(classNameOrig)s_%(methodName)sInfo},' % {'methodName': p, 'classNameOrig': classNameOrig} for p in methodList]
-    for mitem in declList:
-        substs, t = gatherMethodInfo(mitem['dname'], mitem['dparams'], className, classNameOrig, classVariant)
-        if classVariant:
-            cpp.write((proxyMethodTemplateDecl + proxyJMethodTemplate) % substs)
-        else:
-            cpp.write((proxyMethodTemplateDecl + proxyMethodTemplate) % substs)
-            for t in generatedVectors:
-                #'Vector'
-                generated_hpp.write('\ntypedef %s bsvvector_L%s_L%d[%d];' % (t[1], t[1], t[0], t[0]))
-            generatedVectors = []
-    for mitem in declList:
-        substs, t = gatherMethodInfo(mitem['dname'], mitem['dparams'], className, classNameOrig, classVariant)
-        generated_hpp.write((proxyMethodTemplateDecl % substs) + ';')
-    methodTable = ['%(className)s_%(methodName)s,' % {'methodName': p, 'className': className} for p in methodList]
-    cpp.write(proxyMethodTableDecl % {'className': className, 'classNameOrig': classNameOrig, 'methodTable': '\n    '.join(['portal_disconnect,'] + methodTable)})
+    if generateProxy:
+        for mitem in declList:
+            substs, t = gatherMethodInfo(mitem['dname'], mitem['dparams'], className, classNameOrig, classVariant)
+            if generatePacketOnly:
+                substs['temp'] = 'temp_working_addr_start + 2'
+                substs['prolog'] = proxyMethodTemplatePrologPacket % substs
+                substs['paramStructMarshall'] = substs['paramStructMarshall'][0: len(substs['paramStructMarshall']) - 1] + "};"
+            else:
+                substs['temp'] = 'temp_working_addr_start'
+                substs['prolog'] = proxyMethodTemplateProlog % substs
+            if classVariant:
+                cpp.write((proxyMethodTemplateDecl + proxyJMethodTemplate) % substs)
+            else:
+                cpp.write((proxyMethodTemplateDecl + proxyMethodTemplate) % substs)
+                for t in generatedVectors:
+                    #'Vector'
+                    generated_hpp.write('\ntypedef %s bsvvector_L%s_L%d[%d];' % (t[1], t[1], t[0], t[0]))
+                generatedVectors = []
+        for mitem in declList:
+            substs, t = gatherMethodInfo(mitem['dname'], mitem['dparams'], className, classNameOrig, classVariant)
+            generated_hpp.write((proxyMethodTemplateDecl % substs) + ';')
+        methodTable = ['%(className)s_%(methodName)s,' % {'methodName': p, 'className': className} for p in methodList]
+        cpp.write(proxyMethodTableDecl % {'className': className, 'classNameOrig': classNameOrig, 'methodTable': '\n    '.join(['portal_disconnect,'] + methodTable)})
     subs = {'className': classCName, 'maxSize': (maxSize+1) * sizeofUint32_t,
-            'reqInfo': '0x%x' % ((len(declList) << 16) + (maxSize+1) * sizeofUint32_t),
-            'classNameOrig': classNameOrig }
+        'reqInfo': '0x%x' % ((len(declList) << 16) + (maxSize+1) * sizeofUint32_t),
+        'classNameOrig': classNameOrig, 'tmpDecl': handleMessageTemplateTmpDecl}
     if classVariant:
         subs['handleStartup'] = 'Json::Value msg = Json::Value(connectalJsonReceive(p));' % subs
     else:
-        subs['handleStartup'] = 'volatile unsigned int* temp_working_addr = p->transport->mapchannelInd(p, channel);'
+        if generatePacketOnly:
+            subs['handleStartup'] = 'volatile unsigned int* temp_working_addr = &p->map_base[1];'
+            subs['tmpDecl'] = ''
+        else:
+            subs['handleStartup'] = 'volatile unsigned int* temp_working_addr = p->transport->mapchannelInd(p, channel);'
         generated_hpp.write('\nenum { ' + ','.join(reqChanNums) + '};\n' % subs)
         generated_hpp.write('extern const uint32_t %(className)s_reqinfo;\n' % subs)
         cpp.write('\nconst uint32_t %(className)s_reqinfo = %(reqInfo)s;\n' % subs)
-        hpp.write(proxyClassPrefixTemplate % subs)
+        if generateProxy:
+            generateHandler = False
+            for mitem in declList:
+                if mitem.get('rtype') is not None:
+                    generateHandler = True
+            if generateHandler:
+                hpp.write('#include <fcntl.h>\n')
+                hpp.write('#include <semaphore.h>\n')
+                subs['handlerName'] = '__internalHandleMessage'
+                subs['initName'] = '__internalInit();'
+            else:
+                subs['handlerName'] = 'NULL'
+                subs['initName'] = ''
+            hpp.write(proxyClassPrefixTemplate % subs)
+            dindex = 0
+            for mitem in declList:
+                emitMethodDeclaration(mitem['dname'], mitem['dparams'], hpp, classCName, dindex, mitem.get('rtype'))
+                dindex = dindex + 1
+            if generateHandler:
+                hpp.write(syncProxyTemplate % subs)
+            hpp.write('};\n')
+    if generateWrapper:
+        cpp.write('const char * %(className)s_methodSignatures()\n{\n' % subs)
+        signatures = dict([(mitem['dname'], ['long' for param in mitem['dparams']]) for mitem in declList])
+        cpp.write('    return %s;\n}\n' % json.dumps(json.dumps(signatures)))
+        cpp.write((handleMessageTemplateDecl % subs))
+        cpp.write(handleMessageTemplate1 % subs)
         for mitem in declList:
-            emitMethodDeclaration(mitem['dname'], mitem['dparams'], hpp, classCName)
-        hpp.write('};\n')
-    cpp.write('const char * %(className)s_methodSignatures()\n{\n' % subs)
-    signatures = dict([(mitem['dname'], ['long' for param in mitem['dparams']]) for mitem in declList])
-    cpp.write('    return %s;\n}\n' % json.dumps(json.dumps(signatures)))
-    cpp.write((handleMessageTemplateDecl % subs))
-    cpp.write(handleMessageTemplate1 % subs)
-    for mitem in declList:
-        substs, t = gatherMethodInfo(mitem['dname'], mitem['dparams'], className, classNameOrig, classVariant)
+            substs, t = gatherMethodInfo(mitem['dname'], mitem['dparams'], className, classNameOrig, classVariant)
+            if not classVariant:
+                generated_hpp.write(messageStructTemplate % substs)
+            cpp.write(handleMessageCase % substs)
         if not classVariant:
-            generated_hpp.write(messageStructTemplate % substs)
-        cpp.write(handleMessageCase % substs)
-    if not classVariant:
-        elemList = []
-        for mitem in declList:
-            substs, t = gatherMethodInfo(mitem['dname'], mitem['dparams'], className, className, classVariant)
-            elemList.append('%(channelName)sData %(methodName)s;' % substs)
-        generated_hpp.write(portalStructTemplate % {'className': classCName, 'messageStructDeclarations': '\n    '.join(elemList)})
-    cpp.write(handleMessageTemplate2 % subs)
-    generated_hpp.write((handleMessageTemplateDecl % subs)+ ';\n')
-    if not classVariant:
+            elemList = []
+            for mitem in declList:
+                substs, t = gatherMethodInfo(mitem['dname'], mitem['dparams'], className, className, classVariant)
+                elemList.append('%(channelName)sData %(methodName)s;' % substs)
+            generated_hpp.write(portalStructTemplate % {'className': classCName, 'messageStructDeclarations': '\n    '.join(elemList)})
+        cpp.write(handleMessageTemplate2 % subs)
+        generated_hpp.write((handleMessageTemplateDecl % subs)+ ';\n')
+    if (not classVariant) and generateWrapper:
         hpp.write(wrapperClassPrefixTemplate % subs)
+        dindex = 0
         for mitem in declList:
-            emitMethodDeclaration(mitem['dname'], mitem['dparams'], hpp, '')
+            emitMethodDeclaration(mitem['dname'], mitem['dparams'], hpp, '', dindex, mitem.get('rtype'))
+            dindex = dindex + 1
         hpp.write('};\n')
-        cCNSubst = { 'classCName': classCName}
+    cCNSubst = { 'classCName': classCName}
+    if not classVariant:
         generated_hpp.write('typedef struct {\n    PORTAL_DISCONNECT disconnect;\n')
         for mitem in declList:
             if verbose:
@@ -704,19 +847,23 @@ def generate_class(classNameOrig, classVariant, declList, generatedCFiles, creat
             formalParamStr = formalParameters(mitem['dparams'], True)
             methodName = cName(mitem['dname'])
             generated_hpp.write(('    int (*%s) ( ' % methodName) + formalParamStr + ' );\n')
-            generated_cpp.write(('int %s%s_cb ( ' % (classCName, methodName)) + formalParamStr + ' ) {\n')
-            indent(generated_cpp, 4)
-            generated_cpp.write(('(static_cast<%sWrapper *>(p->parent))->%s ( ' % (classCName, methodName)) + paramValues + ');\n')
-            indent(generated_cpp, 4)
-            generated_cpp.write('return 0;\n};\n')
+            if generateWrapper:
+                generated_cpp.write(('int %s%s_cb ( ' % (classCName, methodName)) + formalParamStr + ' ) {\n')
+                indent(generated_cpp, 4)
+                generated_cpp.write(('(static_cast<%sWrapper *>(p->parent))->%s ( ' % (classCName, methodName)) + paramValues + ');\n')
+                indent(generated_cpp, 4)
+                generated_cpp.write('return 0;\n};\n')
         generated_hpp.write('} %(classCName)sCb;\n' % cCNSubst)
+    if (not classVariant) and generateWrapper:
         generated_cpp.write('%(classCName)sCb %(classCName)s_cbTable = {\n    %(classCName)sdisconnect_cb,\n' % cCNSubst)
         for mitem in declList:
             generated_cpp.write('    %s%s_cb,\n' % (classCName, mitem['dname']))
         generated_cpp.write('};\n')
+    if not classVariant:
         hpp.write('#endif // _%(name)s_H_\n' % {'name': className.upper()})
         hpp.close()
-    generated_hpp.write('extern %(classNameOrig)sCb %(className)sProxyReq;\n' % subs)
+    if generateProxy:
+        generated_hpp.write('extern %(classNameOrig)sCb %(className)sProxyReq;\n' % subs)
     if classVariant:
         cpp.write('#endif /* PORTAL_JSON */\n')
     cpp.close()
@@ -809,7 +956,7 @@ def emitCD(item, generated_hpp, indentation):
 def generate_cpp(project_dir, noisyFlag, jsondata):
     global globalv_globalvars, verbose, bsvdefines
     def create_cpp_file(name):
-        fname = os.path.join(project_dir, 'jni', name)
+        fname = os.path.join(project_dir, generatedSubdirectory, name)
         f = util.createDirAndOpen(fname, 'w')
         if verbose:
             print "Writing file ",fname
@@ -827,7 +974,7 @@ def generate_cpp(project_dir, noisyFlag, jsondata):
             bsvdefines[binding] = binding
     generatedCFiles = []
     globalv_globalvars = {}
-    hname = os.path.join(project_dir, 'jni', 'GeneratedTypes.h')
+    hname = os.path.join(project_dir, generatedSubdirectory, 'GeneratedTypes.h')
     generated_hpp = util.createDirAndOpen(hname, 'w')
     generated_hpp.write('#ifndef __GENERATED_TYPES__\n')
     generated_hpp.write('#define __GENERATED_TYPES__\n')
@@ -856,8 +1003,9 @@ def generate_cpp(project_dir, noisyFlag, jsondata):
     for item in jsondata['interfaces']:
         if verbose:
             print 'generateclass', item
-        generate_class(item['cname'],     '', item['cdecls'], generatedCFiles, create_cpp_file, generated_hpp, generated_cpp)
-        generate_class(item['cname'], 'Json', item['cdecls'], generatedCFiles, create_cpp_file, generated_hpp, generated_cpp)
+        generate_class(item['cname'],     '', item['cdecls'], generatedCFiles, create_cpp_file, generated_hpp, generated_cpp, item.get('direction'))
+        if generateJson:
+            generate_class(item['cname'], 'Json', item['cdecls'], generatedCFiles, create_cpp_file, generated_hpp, generated_cpp, item.get('direction'))
     generated_cpp.write('#endif //NO_CPP_PORTAL_CODE\n')
     generated_cpp.close()
     generated_hpp.write('#ifdef __cplusplus\n')
@@ -865,7 +1013,8 @@ def generate_cpp(project_dir, noisyFlag, jsondata):
     generated_hpp.write('#endif\n')
     generated_hpp.write('#endif //__GENERATED_TYPES__\n')
     generated_hpp.close()
-    gen_makefile = util.createDirAndOpen(os.path.join(project_dir, 'jni', 'Makefile.generated_files'), 'w')
-    gen_makefile.write('\nGENERATED_CPP=' + ' '.join(generatedCFiles)+'\n')
-    gen_makefile.close()
+    if not suppressGeneratedMakefile:
+        gen_makefile = util.createDirAndOpen(os.path.join(project_dir, generatedSubdirectory, 'Makefile.generated_files'), 'w')
+        gen_makefile.write('\nGENERATED_CPP=' + ' '.join(generatedCFiles)+'\n')
+        gen_makefile.close()
     return generatedCFiles
