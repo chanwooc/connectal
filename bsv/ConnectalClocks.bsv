@@ -29,13 +29,18 @@ import Real::*;
 Real pcieClockPeriod = `PcieClockPeriod;
 `endif
 
-//Real mainClockPeriod = `MainClockPeriod;
-//Real derivedClockPeriod =`DerivedClockPeriod;
 
 // To deal with non-integer mainClockPeriod..
 // These numbers are for clock generation so could be ratioed numbers
+`ifdef ZynqUltrascale
+// UltraScale does not support fractional clkfbout_mult which is mainClockPeriod for ZCU102
 Real mainClockPeriod = fromInteger(trunc(`MainClockPeriod));
 Real derivedClockPeriod = mainClockPeriod * `DerivedClockPeriod / `MainClockPeriod;
+`else
+Real mainClockPeriod = `MainClockPeriod;
+Real derivedClockPeriod =`DerivedClockPeriod;
+`endif
+
 
 (* always_ready, always_enabled *)
 interface B2C;

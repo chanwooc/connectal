@@ -51,7 +51,7 @@ instance ConnectableWithClocks#(Get#(a), Put#(a)) provisos (
    );
    module mkConnectionWithClocks#(Clock inClock, Reset inReset, Clock outClock, Reset outReset, Get#(a) in, Put#(a) out)(Empty) provisos (Bits#(a, awidth), Add#(1, a__, awidth));
 `ifndef GET_PUT_WITH_CLOCKS_USE_XILINX_FIFO
-      SyncFIFOIfc#(a) synchronizer <- mkSyncFIFO(8, inClock, inReset, outClock);
+      SyncFIFOIfc#(a) synchronizer <- mkSyncFIFO(16, inClock, inReset, outClock);
       //FIFOF#(a) synchronizer <- mkDualClockBramFIFOF(inClock, inReset, outClock, outReset);
       let getProbe <- mkProbe(clocked_by inClock, reset_by inReset);
       let putProbe <- mkProbe(clocked_by outClock, reset_by outReset);
@@ -185,7 +185,7 @@ instance ConnectableWithClocks#(Client#(a,b), Server#(a,b))
 		Bits#(a, awidth),
 		Bits#(b, bwidth));
       let reqCnx <- mkConnectionWithClocks(inClock, inReset, outClock, outReset, client.request, server.request);
-      let respCnx <- mkConnectionWithClocks(inClock, inReset, outClock, outReset, server.response, client.response);
+      let respCnx <- mkConnectionWithClocks(outClock, outReset, inClock, inReset, server.response, client.response);
    endmodule
    module mkConnectionWithClocks2#(Client#(a,b) client, Server#(a,b) server)(Empty)
       provisos (ConnectableWithClocks#(Get#(a), Put#(a)),
