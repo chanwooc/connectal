@@ -380,8 +380,12 @@ extern PortalPoller *defaultPoller;
 class Portal {
     void initPortal() {
         if (pint.handler || pint.poller_register) {
-            if (pint.poller == 0)
-                pint.poller = defaultPoller;
+            if (pint.poller == 0) {
+                if (defaultPoller == NULL)
+                    pint.poller = new PortalPoller();
+                else
+                    pint.poller = defaultPoller;
+            }
             pint.poller->registerInstance(this);
         }
     }
