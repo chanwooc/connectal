@@ -30,8 +30,8 @@ static int iterCnt = 1;
 static int numWords = 4096;
 static int iterCnt = 8;
 #else
-static int numWords = 0x1240000/4; // make sure to allocate at least one entry of each size
-static int iterCnt = 8;
+static int numWords = 0x124000/4; // make sure to allocate at least one entry of each size
+static int iterCnt = 1;
 #endif
 #ifdef PCIE
 static int burstLen = 32;
@@ -111,15 +111,19 @@ int main(int argc, const char **argv)
       sem_wait(&test_sem);
       mismatch = 0;
 	  sg = 0;
+
+	  for (int j = 0; j < numEngineServers; j++) {
       for (int i = 0; i < numWords; i++) {
-        if (dstBuffer[i] != sg) {
+        if (dstBuffer[i+j*numWords] != (sg + (j<<28))) {
 	  mismatch++;
 	  if (max_error-- > 0)
-	    fprintf(stderr, "testmemwrite: [%d] actual %08x expected %08x\n", i, dstBuffer[i], sg);
+	    fprintf(stderr, "testmemwrite: [EngineServer%d] [%d] actual %08x expected %08x\n", j, i, dstBuffer[i+j*numWords], sg + (j<<28));
         }
         sg++;
       }
-      platformStatistics();
+	  sg = 0;
+	  }
+      // platformStatistics();
       fprintf(stderr, "testmemwrite: mismatch count %d.\n", mismatch);
       burstLen *= 2;
       if (mismatch)
