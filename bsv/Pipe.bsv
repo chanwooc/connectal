@@ -475,7 +475,8 @@ instance FunnelPipesPipelined#(1,k,a,bpc)
 	    Integer numPipes = stride;
 	    if (i + stride > valueOf(k))
 	       numPipes = valueOf(k) - i;
-	    mkFunnelNode(inpipes, numPipes, toPut(buffs[j-1][i/stride]));
+	    // mkFunnelNode(inpipes, numPipes, toPut(buffs[j-1][i/stride]));
+	    mkFunnelNodeRR(inpipes, numPipes, toPut(buffs[j-1][i/stride]));
 	 end
       end
       return vec(infss[0][0]);
