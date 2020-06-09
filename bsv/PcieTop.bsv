@@ -104,7 +104,16 @@ module mkPcieTop #(Clock pcie_refclk_p, Clock osc_50_b3b, Reset pcie_perst_n) (P
    if (mainClockPeriod == pcieClockPeriod) begin
        mkConnection(host.tpciehost.master, portalTop.slave, clocked_by host.portalClock, reset_by host.portalReset);
        if (valueOf(NumberOfMasters) > 0) begin
-	  zipWithM_(mkConnection,portalTop.masters, host.tpciehost.slave);
+//	  zipWithM_(mkConnection,portalTop.masters, host.tpciehost.slave);
+          for ( Integer i = 0; i < valueOf(NumberOfMasters); i = i + 1) begin
+             `ifndef USE_WIDE_WIDTH
+	         mkConnection(portalTop.masters[i], host.tpciehost.slave[i]);
+             `else
+             let memCnx <- GetPutWithClocks::mkConnectionWithGearbox(host.portalClock, host.portalReset,
+			                                           host.pcieClock, host.pcieReset,
+			                                           portalTop.masters[i], host.tpciehost.slave[i]);
+             `endif
+          end
        end
    end
    else begin
@@ -113,10 +122,23 @@ module mkPcieTop #(Clock pcie_refclk_p, Clock osc_50_b3b, Reset pcie_perst_n) (P
 								 host.tpciehost.master, portalTop.slave);
        if (valueOf(NumberOfMasters) > 0) begin
 	  //zipWithM_(GetPutWithClocks::mkConnectionWithClocks2, portalTop.masters, host.tpciehost.slave);
-	  for (Integer i = 0; i < valueOf(NumberOfMasters); i = i + 1)
-	     let memCnx <- GetPutWithClocks::mkConnectionWithClocks(host.portalClock, host.portalReset,
-								    host.pcieClock, host.pcieReset,
-								    portalTop.masters[i], host.tpciehost.slave[i]);
+//	  for (Integer i = 0; i < valueOf(NumberOfMasters); i = i + 1)
+//	     let memCnx <- GetPutWithClocks::mkConnectionWithClocks(host.portalClock, host.portalReset,
+//								    host.pcieClock, host.pcieReset,
+//								    portalTop.masters[i], host.tpciehost.slave[i]);
+
+	     for (Integer i = 0; i < valueOf(NumberOfMasters); i = i + 1) begin
+            
+            `ifndef USE_WIDE_WIDTH
+	        GetPutWithClocks::mkConnectionWithClocks(host.portalClock, host.portalReset,
+			                                         host.pcieClock, host.pcieReset,
+			                                         portalTop.masters[i], host.tpciehost.slave[i]);
+            `else
+            let memCnx <- GetPutWithClocks::mkConnectionWithGearbox(host.portalClock, host.portalReset,
+			                                                        host.pcieClock, host.pcieReset,
+			                                                        portalTop.masters[i], host.tpciehost.slave[i]);
+            `endif
+         end
        end
    end
 
