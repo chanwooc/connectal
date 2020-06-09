@@ -94,7 +94,7 @@ module mkMemWriteChannel#(Integer bufferSizeBytes, Integer channelNumber,
       clientInFlight <= True;
       clientBursts <= True;
       clientStart <= cmd;
-      $display("cycles %d starting request %d bytes %d", cycles, cmd.tag, cmd.len);
+      //$display("cycles %d starting request %d bytes %d", cycles, cmd.tag, cmd.len);
       clientCycles <= 0;
    endrule
    rule rule_request_cycles;
@@ -202,7 +202,7 @@ module mkMemWriteChannel#(Integer bufferSizeBytes, Integer channelNumber,
       `endif
 	       begin
 		  clientCommand.enq(cmd);
-		  $display("(%d) %h %h %h", channelNumber, cmd.base, cmd.len, cmd.burstLen);
+		  //$display("(%d) %h %h %h", channelNumber, cmd.base, cmd.len, cmd.burstLen);
 	       end
 	 endmethod
       endinterface
@@ -338,6 +338,7 @@ module mkMemWriteChannelPipelined#(Integer bufferSizeBytes, Integer channelNumbe
    //    $display("**WARNING** %m clientFinished is EMPTY...");
    // endrule
 
+   Bool verbose = False;
 
    
    Reg#(Bit#(32)) lenCnt <- mkReg(0);
@@ -360,7 +361,7 @@ module mkMemWriteChannelPipelined#(Integer bufferSizeBytes, Integer channelNumbe
             clientCommand.deq;
          end
          
-         $display("%m writeReq %d, %h %h %h (@ %t)", channelNumber, cmd.base, bl, last, $time);
+         if(verbose)$display("%m writeReq %d, %h %h %h (@ %t)", channelNumber, cmd.base, bl, last, $time);
          inProgress.enq(tuple3(truncate(bl>>beat_shift), cmd.tag, last));
          writeReqFifo.enq(MemRequest { sglId: cmd.sglId, offset: extend(cmd.base+lenCnt), burstLen:bl, tag: fromInteger(channelNumber)});
          
@@ -382,14 +383,14 @@ module mkMemWriteChannelPipelined#(Integer bufferSizeBytes, Integer channelNumbe
 	     respCnt <= new_respCnt;
       end
       let wd <- toGet(dataBuffer).get();
-      $display("%m writeData channel = %d, data:%h, last: %d (@%t)", channelNumber, wd, lastBeat, $time);
+      if(verbose)$display("%m writeData channel = %d, data:%h, last: %d (@%t)", channelNumber, wd, lastBeat, $time);
       writeDataFifo.enq(MemData{data:wd, tag:fromInteger(channelNumber), last:lastBeat});
    endrule      
 
    rule rlWriteDone;
       let tag <- toGet(writeDonePipe).get();
       match {.idx, .req_tag, .last} <- toGet(serverDone).get;
-      $display("%m writeDone idx: %d, req_tag: %d, last: %d (@ %t) ", idx, req_tag, last, $time);
+      if(verbose)$display("%m writeDone idx: %d, req_tag: %d, last: %d (@ %t) ", idx, req_tag, last, $time);
       if (last) begin
          let startCycle <- toGet(clientCyclesFifoStart).get;
 	     // clientInFlight <= False;
@@ -426,7 +427,7 @@ module mkMemWriteChannelPipelined#(Integer bufferSizeBytes, Integer channelNumbe
 	           begin
 	              clientCommand.enq(cmd);
                   // dataBeatQ.enq(cmd.len >> beat_shift);
-	              $display("(%d) %h %h %h", channelNumber, cmd.base, cmd.len, cmd.burstLen);
+	              //$display("(%d) %h %h %h", channelNumber, cmd.base, cmd.len, cmd.burstLen);
                   clientCyclesFifoStart.enq(cycles);
 	           end
 	     endmethod
