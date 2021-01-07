@@ -69,8 +69,17 @@ endif
 GDB_BSIM= LD_PRELOAD=libSegFault.so SEGFAULT_USE_ALTSTACK=1 SEGFAULT_OUTPUT_NAME=bin/bsim-segv-output.txt
 
 
-BSCVERSION=$(shell bsc -v |grep Compiler | sed -e "s/.*version //" -e "s/ .*//")
-BSCMAJOR=$(shell bsc -v |grep Compiler | sed -e "s/.*version //" -e "s/\..*//")
+BSCVERSION=$(shell bsc -v |grep version | sed -e "s/.*version //" -e "s/ .*//")
+BSCMAJOR=$(shell bsc -v |grep version | sed -e "s/.*version //" -e "s/\..*//")
+ifeq ($(BSCVERSION),)
+	BSIM_LIBRARY_DIR = $(BLUESPECDIR)/Bluesim
+else ifeq ($(shell test $(BSCMAJOR) -le 2019 &>/dev/null && echo obsolete),)
+	BSIM_LIBRARY_DIR = $(BLUESPECDIR)/Bluesim
+else
+	BSIM_LIBRARY_DIR = $(BLUESPECDIR)/Bluesim/g++4_64
+	CXXFLAGS_BSIM += -DBSC_OBSOLETE
+endif
+
 ifneq ($(BSCMAJOR), 2013)
     # S0015: The use of a mkSyncReset may not always result in a reset
     #        signal being seen on the destination side. Recommend
@@ -79,19 +88,7 @@ ifneq ($(BSCMAJOR), 2013)
 else
     #BSCFLAGS_COMMON += -D ExportUnusedClocksAndResets
 endif
-ifeq ($(BSCVERSION), 2014.07.A)
-    BSCFLAGS_COMMON += -D ClockDefaultParam
-endif
-ifeq ($(BSCMAJOR), 2015)
-    BSCFLAGS_COMMON += -D ClockDefaultParam
-endif
-ifeq ($(BSCMAJOR), 2016)
-    BSCFLAGS_COMMON += -D ClockDefaultParam
-endif
-ifeq ($(BSCMAJOR), 2017)
-    BSCFLAGS_COMMON += -D ClockDefaultParam
-endif
-ifeq ($(BSCMAJOR), 2018)
+ifneq ($(BSCMAJOR), 2013)
     BSCFLAGS_COMMON += -D ClockDefaultParam
 endif
 ifeq ($(BOARD),bluesim)
@@ -100,9 +97,12 @@ else
     BSCFLAGS_COMMON += -verilog -remove-dollar
 endif
 
+# Add -wait-for-license if bsc supports it
+BSCFLAGS_COMMON += $(shell bsc -help | grep -q wait-for-license && echo -wait-for-license)
+
 BSCOPTFLAGS= -show-schedule -aggressive-conditions -show-method-bvi
 BSCPATHFLAGS=  -bdir $(DTOP)/obj -vdir $(DTOP)/verilog -simdir $(DTOP)/obj -info-dir $(DTOP)/obj
-BSCFLAGS_COMMON += $(BSCWARNFLAGS) $(BSCOPTFLAGS) $(BSCPATHFLAGS) --wait-for-license
+BSCFLAGS_COMMON += $(BSCWARNFLAGS) $(BSCOPTFLAGS) $(BSCPATHFLAGS)
 PROF_FLAGS= #-pg
 export SIM_CFLAGS= $(CFLAGS_PROJECT) -fPIC -Ijni -I $(CONNECTALDIR)/cpp -I $(CONNECTALDIR) -I $(CONNECTALDIR)/lib/json -O $(PROF_FLAGS)
 export SIM_CXXFLAGS= $(CXXFLAGS_PROJECT) -fPIC -Ijni -I $(CONNECTALDIR)/cpp -I $(CONNECTALDIR) -O $(PROF_FLAGS)
@@ -140,10 +140,12 @@ BUILDCACHE_CACHEDIR=$(shell cd $(CONNECTALDIR)/..; /bin/pwd)/fpgamake-cache
 endif
 endif
 
+EXTRABSVPATH = $(shell test -d $(BLUESPECDIR)/Libraries/FPGA && echo -p +:$(BLUESPECDIR)/Libraries/FPGA/Xilinx:$(BLUESPECDIR)/Libraries/FPGA/Altera:$(BLUESPECDIR)/Libraries/FPGA/Misc)
+
 ifneq ($(BSC_LM_LICENSE_FILE),)
 RUN_BSC_LM_LICENSE_FILE=LM_LICENSE_FILE=$(BSC_LM_LICENSE_FILE)
 endif
-RUN_BSC = $(RUN_BSC_LM_LICENSE_FILE) BUILDCACHE_CACHEDIR=$(BUILDCACHE_CACHEDIR) $(BUILDCACHE) bsc $(BSC_QUIET) $(BSCFLAGS_COMMON) $(BSCFLAGS_PROJECT) $(BSCFLAGS_EXTRA) -p +:$(BSVPATH)
+RUN_BSC = $(RUN_BSC_LM_LICENSE_FILE) BUILDCACHE_CACHEDIR=$(BUILDCACHE_CACHEDIR) $(BUILDCACHE) bsc $(BSC_QUIET) $(BSVDEFINES) $(BSCFLAGS_COMMON) $(BSCFLAGS_PROJECT) $(BSCFLAGS_EXTRA) -p +:$(BSVPATH) $(EXTRABSVPATH)
 VFILE=verilog/$(MKTOP).v
 
 all: exe bits extratarget
@@ -397,11 +399,11 @@ bsim: prepare_bin_target $(DTOP)/bin/libconnectal-sim.so obj/mkXsimTop.ba
 	$(Q)mkdir -p $(DTOP)/obj verilog
 	@echo BSCBSIM [$(DTOP)]
 	$(Q)cd generatedbsv; MAKEFLAGS="" $(RUN_BSC) -O -L $(DTOP)/bin  -l connectal-sim -sim -e $(MKTOP) -o bsim $(DTOP)/obj/*.ba
-	g++ -O -g -o bin/bsim -Iobj -I$(BLUESPECDIR)/Bluesim obj/*.o $(CONNECTALDIR)/cpp/bluesim_main.cxx -L$(BLUESPECDIR)/Bluesim/g++4_64 -lbskernel -lbsprim -lpthread -L bin -lconnectal-sim
+	g++ -O -g $(CXXFLAGS_BSIM) -o bin/bsim -Iobj -I$(BLUESPECDIR)/Bluesim obj/*.o $(CONNECTALDIR)/cpp/bluesim_main.cxx -L$(BSIM_LIBRARY_DIR) -lbskernel -lbsprim -lpthread -L bin -lconnectal-sim
 
 
 build/checkpoints/to_aws/mkTop.SH_CL_routed.dcp: verilog
-	CONNECTALDIR=$(CONNECTALDIR) $(CONNECTALDIR)/scripts/aws/build.sh
+	CONNECTALDIR=$(CONNECTALDIR) $(CONNECTALDIR)/scripts/aws/build.sh $(AWSFLAGS)
 
 syntax.timestamp: $(BSVFILES)
 	@#$syntax.py uses environment variables: V INTERFACES BSVDEFINES_LIST DTOP DUT_NAME
