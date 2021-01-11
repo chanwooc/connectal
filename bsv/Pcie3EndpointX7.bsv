@@ -41,7 +41,6 @@ import ConnectalFIFO     ::*;
 import SpecialFIFOs      ::*;
 import ClientServer      ::*;
 import Real              ::*;
-import XilinxVirtex7PCIE ::*;
 import BUtils            ::*;
 import Probe             ::*;
 
@@ -109,6 +108,93 @@ typedef struct {
    Bit #(8)      be;
 } AxiStRc deriving (Bits, Eq);
 
+typedef struct {
+   ReservedZero#(1)         r1;
+   TLPAttrIDBasedOrdering   idbased;
+   TLPAttrRelaxedOrdering   relaxed;
+   TLPAttrNoSnoop           nosnoop;
+   TLPTrafficClass          tclass;
+   BARAperture              aperture;
+   BARID                    barid;
+   TargetFunction           targetfn;
+   TLPTag                   tag;
+   PciId                    reqid;
+   ReservedZero#(1)         r2;
+   RequestType              reqtype;
+   DWCount                  dwcount;
+   DWAddress64              address;
+   TLPAddressType           addrtype;
+} CQDescriptor deriving (Bits, Eq);
+
+typedef struct {
+   Bool                     forceecrc;
+   TLPAttrIDBasedOrdering   idbased;
+   TLPAttrRelaxedOrdering   relaxed;
+   TLPAttrNoSnoop           nosnoop;
+   TLPTrafficClass          tclass;
+   Bool                     compliden;
+   PciId                    complid;
+   TLPTag                   tag;
+   PciId                    reqid;
+   ReservedZero#(1)         r1;
+   TLPPoison                poisoned;
+   TLPCompletionStatus      status;
+   DWCount                  dwcount;
+   ReservedZero#(2)         r2;
+   Bool                     lockedcmpl;
+   ByteCount                bytecount;
+   ReservedZero#(6)         r3;
+   TLPAddressType           addrtype;
+   ReservedZero#(1)         r4;
+   TLPLowerAddr             loweraddr;
+} CCDescriptor deriving (Bits, Eq);
+
+typedef struct {
+   Bool                     forceecrc;
+   TLPAttrIDBasedOrdering   idbased;
+   TLPAttrRelaxedOrdering   relaxed;
+   TLPAttrNoSnoop           nosnoop;
+   TLPTrafficClass          tclass;
+   Bool                     reqiden;
+   PciId                    complid;
+   TLPTag                   tag;
+   PciId                    reqid;
+   TLPPoison                poisoned;
+   RequestType              reqtype;
+   DWCount                  dwcount;
+   DWAddress64              address;
+   TLPAddressType           addrtype;
+} RQDescriptor deriving (Bits, Eq);
+
+typedef struct {
+   ReservedZero#(1)         r1;
+   TLPAttrIDBasedOrdering   idbased;
+   TLPAttrRelaxedOrdering   relaxed;
+   TLPAttrNoSnoop           nosnoop;
+   TLPTrafficClass          tclass;
+   ReservedZero#(1)         r2;
+   PciId                    complid;
+   TLPTag                   tag;
+   PciId                    reqid;
+   ReservedZero#(1)         r3;
+   TLPPoison                poisoned;
+   TLPCompletionStatus      status;
+   DWCount                  dwcount;
+   ReservedZero#(1)         r4;
+   Bool                     reqcompleted;
+   Bool                     lockedcmpl;
+   ByteCount                bytecount;
+   ErrorCode                errcode;
+   Bit#(12)                 loweraddr;
+} RCDescriptor deriving (Bits, Eq);
+
+// Conversion functions for PCIE3 AXI-Stream descriptors.  One thing to note
+// here is that the TLPData#(n).be field is only ever set in the logic that
+// utilizes these functions.  It was a required field for the original PCIE
+// design by Xilinx, but is no longer used for PCIE3.  Therefore, the .be
+// field will not be assigned in the TLPData#(n) type for traffic going to
+// the DMA and CSR blocks.
+
 function TLPData#(16) convertCQDescriptorToTLP16(CQDescriptor desc, Bit#(32) data, TLPFirstDWBE first, TLPLastDWBE last);
    TLPMemoryIO3DWHeader header = defaultValue;
    header.format     = tpl_1(convertCQReqTypeToTLPFmtType(desc.reqtype));
@@ -123,7 +209,7 @@ function TLPData#(16) convertCQDescriptorToTLP16(CQDescriptor desc, Bit#(32) dat
    header.firstbe    = first;
    header.addr       = truncate(desc.address);
    header.data       = convertDW(data);
-   
+
    Bool is3DW = isReadReqType(desc.reqtype);
    Bool is3Or4DW = isReadReqType(desc.reqtype) || (desc.dwcount == 1);
 
@@ -133,9 +219,26 @@ function TLPData#(16) convertCQDescriptorToTLP16(CQDescriptor desc, Bit#(32) dat
    retval.hit   = (1 << pack(desc.barid));
    retval.data  = pack(header);
    retval.be    = (is3DW ? 16'hFFF0 : 16'hFFFF);
-   
+
    return retval;
 endfunction
+
+// this only expects Memory and IO types
+function Bool isReadReqType(RequestType t);
+   return ((t == MEMORY_READ) || (t == IO_READ));
+endfunction
+
+// this only expects Memory and IO types
+function Tuple2#(TLPPacketFormat,TLPPacketType) convertCQReqTypeToTLPFmtType(RequestType t);
+   case (t)
+     MEMORY_READ : return tuple2(MEM_READ_3DW_NO_DATA, MEMORY_READ_WRITE);
+     MEMORY_WRITE : return tuple2(MEM_WRITE_3DW_DATA, MEMORY_READ_WRITE);
+     IO_READ : return tuple2(MEM_READ_3DW_NO_DATA, IO_REQUEST);
+     IO_WRITE : return tuple2(MEM_WRITE_3DW_DATA, IO_REQUEST);
+     default : return ?;
+   endcase
+endfunction
+
 
 function TLPData#(16) convertRCDescriptorToTLP16(RCDescriptor desc, Bit#(32) data);
    TLPCompletionHeader header = defaultValue;
@@ -162,6 +265,77 @@ function TLPData#(16) convertRCDescriptorToTLP16(RCDescriptor desc, Bit#(32) dat
    retval.be    = (is3DW ? 16'hFFF0 : 16'hFFFF);
    
    return retval;
+endfunction
+
+
+function Tuple2#(CCDescriptor, Bit#(32)) convertTLP16ToCCDescriptor(TLPData#(16) header);
+   TLPCompletionHeader cmplheader = unpack(header.data);
+   CCDescriptor desc = unpack(0);
+   desc.relaxed      = cmplheader.relaxed;
+   desc.nosnoop      = cmplheader.nosnoop;
+   desc.tclass       = cmplheader.tclass;
+   desc.compliden    = False;
+   desc.complid      = cmplheader.cmplid;
+   desc.tag          = cmplheader.tag;
+   desc.reqid        = cmplheader.reqid;
+   desc.poisoned     = cmplheader.poison;
+   desc.status       = cmplheader.cstatus;
+   desc.dwcount      = (cmplheader.length == 0) ? 1024 : zeroExtend(cmplheader.length);
+   desc.lockedcmpl   = False;
+   desc.bytecount    = (cmplheader.bytecount == 0) ? 4096 : zeroExtend(cmplheader.bytecount);
+   desc.loweraddr    = cmplheader.loweraddr;
+
+   return tuple2(desc, convertDW(cmplheader.data));
+endfunction
+
+// Functions to convert between the byte order inside data words of
+// Xilinx AXI packets and PCIe TLP packets
+
+function Bit#(32) convertDW(Bit#(32) dw);
+  Vector#(4, Bit#(8)) bytes = unpack(dw);
+  return pack(reverse(bytes));
+endfunction
+
+function Tuple4 #(RQDescriptor,
+		  TLPFirstDWBE,
+		  TLPLastDWBE,
+		  Maybe#(Bit#(32)))
+         convertTLP16ToRQDescriptor (TLPData #(16) header);
+
+   // Note: other than .addr and .data, remaining fields are same for
+   // the two header formats below
+   TLPMemoryIO3DWHeader header3dw = unpack(header.data);
+   TLPMemory4DWHeader   header4dw = unpack(header.data);
+   RQDescriptor desc = unpack(0);
+   Maybe#(Bit#(32)) data = tagged Invalid;
+
+   desc.relaxed      = header4dw.relaxed;
+   desc.nosnoop      = header4dw.nosnoop;
+   desc.tclass       = header4dw.tclass;
+   desc.reqiden      = False;
+   desc.tag          = header4dw.tag;
+   desc.reqid        = header4dw.reqid;
+   desc.poisoned     = header4dw.poison;
+   case(header4dw.format)
+      MEM_READ_3DW_NO_DATA: desc.reqtype = MEMORY_READ;
+      MEM_READ_4DW_NO_DATA: desc.reqtype = MEMORY_READ;
+      MEM_WRITE_3DW_DATA:   desc.reqtype = MEMORY_WRITE;
+      MEM_WRITE_4DW_DATA:   desc.reqtype = MEMORY_WRITE;
+      default:              desc.reqtype = MEMORY_READ;
+   endcase
+   desc.dwcount      = (header4dw.length == 0) ? 1024 : zeroExtend(header4dw.length);
+
+   if (header4dw.format == MEM_WRITE_4DW_DATA || header4dw.format == MEM_READ_4DW_NO_DATA) begin
+      desc.address      = header4dw.addr;
+   end
+   else begin
+      desc.address      = zeroExtend(header3dw.addr);
+      if (header3dw.format == MEM_WRITE_3DW_DATA) begin
+	 data           = tagged Valid convertDW(header3dw.data);
+      end
+   end
+
+   return tuple4 (desc, header4dw.firstbe, header4dw.lastbe, data);
 endfunction
 
 typedef struct {
